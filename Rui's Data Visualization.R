@@ -520,3 +520,34 @@ wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100)
 
 
 
+
+##2nd and 3rd category level under women 
+#prepare the dataframe and combine 2nd category and 3rd category
+w <- sp %>% filter(sp$cat1 == "Women") 
+w$cat2_3 <- paste(w$cat2,w$cat3)
+##word cloud for 2nd category level under women 
+corpus <- Corpus(VectorSource(w$cat2))
+#check the first comment 
+corpus[[1]][1]
+
+#Text cleaning
+#convert the text to lower case 
+corpus <- tm_map(corpus,content_transformer(tolower))
+#Remove numbers 
+corpus <- tm_map(corpus,removeNumbers)
+#Remove common stopwords
+corpus <- tm_map(corpus,removeWords,c("this","the","is","in","i","they","no","you","and","for","with",
+                                      "but","are","not","have","from","please","have","can","all","each",
+                                      "will","been","just","your","that","has","yet","these"))
+#Remove punctuations
+corpus <- tm_map(corpus,removePunctuation)
+#Eliminate extra white space
+corpus <- tm_map(corpus,stripWhitespace)
+
+#Build wordcloud
+wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100))
+
+
+
+
+
