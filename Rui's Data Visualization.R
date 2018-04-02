@@ -5,6 +5,10 @@ install.packages("data.table")
 library("data.table")
 install.packages("ggplot2")
 library("ggplot2")
+install.packages("tm")
+library('tm')
+install.packages("wordcloud")
+library('wordcloud')
 
 
 #read in the data
@@ -25,11 +29,13 @@ ggplot(data=train,aes(price))+
 
 #histogram of log(price+1) using ggplot
 p = log(price+1)                 #use price+1 to avoid zero values 
-ggplot(data=train,aes(p))+
+ggplot(data=train,aes(log(price+1)))+
   geom_histogram(binwidth=0.2,fill="steelblue",col="black")+
   ggtitle("Distribution of log(price+1)")
 
 
+#ks test for normality 
+ks.test((train$price - mean(train$price))/sd(train$price), pnorm)
 
 #############################################################Shipping type 
 #get the number of shippings paid by sellers 
@@ -51,6 +57,23 @@ p_0 = log(train_0$price)
 hist(p_1,col = rgb(1,0,0,0.5),breaks=30,xlab="log(price+1)",main="Distribution of price by shipping")
 hist(p_0,col = rgb(0,0,1,0.5),breaks=30,add=TRUE)
 
+
+#average price for different shipping type 
+m1 = mean(train_1$price)
+m0 = mean(train_0$price)
+
+
+
+#shipping barplots 
+train %>% ggplot(aes(x=train$shipping))+
+  geom_bar(width=0.5)
+
+
+#boxplot of shipping versus log(price+1)
+train %>% ggplot(aes(x=shipping,y=log(price+1),fill=shipping,group=shipping))+
+  geom_boxplot(width=0.5)+
+  ggtitle("Boxplot of log(price+1) versus shipping")+
+  theme(legend.position="none")
 
 
 
@@ -101,6 +124,16 @@ cat2_sum <- as.data.frame(summary(sp$cat2))
 
 #cat3 summary
 cat3_sum <- as.data.frame(summary(sp$cat3))
+
+#cat4 summary
+cat4_sum <- as.data.frame(summary(sp$cat4))
+
+
+#Number of cat1,cat2,cat3,cat4
+num_cat1=length(unique(sp$cat1))
+num_cat2=length(unique(sp$cat2))
+num_cat3=length(unique(sp$cat3))
+num_cat4=length(unique(sp$cat4))
 
 
 ##cat1
@@ -159,6 +192,27 @@ ggplot(data=cat3,aes(x=reorder(Category3,Sales3),y=Sales3))+
 
 
 
+##cat4
+#create the data frame for cat4
+Category4 <- c("No brand","Ballet","Baseball","Bomber","Outdoor Games","Serving","eBook Access",
+               "eBook Readers")
+
+Sales4 <- c()
+for(i in 1:nrow(cat4_sum)){
+  Sales4[i] = cat4_sum[i,1]
+}
+
+cat4 <- data.frame(Category4,Sales4)
+
+
+
+#histogram for cat4
+ggplot(data=cat4, aes(x=reorder(Category4,Sales4), y=Sales4)) +
+  geom_bar(stat="identity")+
+  scale_x_discrete(name="Category")+
+  ggtitle("Category level 4")
+
+
 
 
 
@@ -186,7 +240,7 @@ corpus <- Corpus(VectorSource(item_description))
 corpus[[1]][1]
 
 #Text cleaning
-#convert the text to lower case 
+#convert the text to lower case   
 corpus <- tm_map(corpus,content_transformer(tolower))
 #Remove numbers 
 corpus <- tm_map(corpus,removeNumbers)
@@ -521,6 +575,9 @@ wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100)
 
 
 
+
+
+
 ##2nd and 3rd category level under women 
 #prepare the dataframe and combine 2nd category and 3rd category
 w <- sp %>% filter(sp$cat1 == "Women") 
@@ -547,6 +604,87 @@ corpus <- tm_map(corpus,stripWhitespace)
 #Build wordcloud
 wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100))
 
+
+
+
+########################################################item condition
+#barplot of item condition
+train %>% ggplot(aes(x=item_condition_id,fill=item_condition_id,group=item_condition_id))+
+  geom_bar()+
+  ggtitle("Barplot of item condition")+
+  theme(legend.position="none")
+
+
+
+#boxplot of item condition versus log(price+1)
+train %>% ggplot(aes(x=item_condition_id,y=log(price+1),fill=item_condition_id,group=item_condition_id))+
+  geom_boxplot(width=0.5)+
+  ggtitle("Boxplot of item condition versus log(price+1)")+
+  theme(legend.position="none")
+
+
+
+######################################################has brand or not 
+sp <- mutate(sp,has_brand=ifelse(brand_name != "",TRUE,FALSE))
+
+
+#histogram of has_brand
+sp %>% ggplot(aes(x=has_brand,fill=has_brand))+
+  geom_bar(width=0.5)+
+  ggtitle("Barplot of having brand or not")
+
+
+#boxplot of has_brand and log(price+1)
+sp %>% ggplot(aes(x=has_brand,y=log(price+1),fill=has_brand))+
+  geom_boxplot()+
+  ggtitle("Boxplot of has_brand versus log(price+1)")
+
+
+#1st category has brand or not 
+sp %>% ggplot(aes(x=cat1,y=log(price+1)))+
+  geom_boxplot(aes(fill=has_brand))+
+  ggtitle("Boxplot of cat1 versus log(price+1)")
+
+
+
+#has_brand percentage
+len_b = length(which(sp['has_brand']==TRUE))
+per_b = len_b/nrow(sp)
+len_nb = length(which(sp['has_brand']==FALSE))
+per_nb = len_nb/nrow(sp)
+
+
+
+#has_brand median price 
+brand <- sp[which(sp['has_brand'] == TRUE),]
+md_b = median(brand$price)
+no_brand <- sp[which(sp['has_brand'] == FALSE),]
+md_nb = median(no_brand$price)
+
+
+
+#wordcloud for name 
+##word cloud for item name 
+corpus <- Corpus(VectorSource(sp$name))
+#check the first comment 
+corpus[[1]][1]
+
+#Text cleaning
+#convert the text to lower case 
+corpus <- tm_map(corpus,content_transformer(tolower))
+#Remove numbers 
+corpus <- tm_map(corpus,removeNumbers)
+#Remove common stopwords
+corpus <- tm_map(corpus,removeWords,c("this","the","is","in","i","they","no","you","and","for","with",
+                                      "but","are","not","have","from","please","have","can","all","each",
+                                      "will","been","just","your","that","has","yet","these"))
+#Remove punctuations
+corpus <- tm_map(corpus,removePunctuation)
+#Eliminate extra white space
+corpus <- tm_map(corpus,stripWhitespace)
+
+#Build wordcloud
+wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100))
 
 
 
