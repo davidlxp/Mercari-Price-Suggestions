@@ -1,0 +1,69 @@
+library(data.table) # Loading data
+#library(ggplot2) # Data visualization
+#library(treemapify) # Treemap visualization
+#library(gridExtra) # Create multiplot
+library(dplyr) # data manipulation
+library(tidyr) # data manipulation
+library(tibble) # data wrangling
+library(stringr) # String processing
+#library(repr)
+library(stringi) # String processing
+library(Matrix)
+library(glmnet)
+#library(tokenizers)
+library(quanteda)
+library(neuralnet)
+#neural net work
+
+#read raw data
+train = fread('C:/Users/Yixiao Lu/Documents/189fpj/train.tsv', sep='\t')
+#test1 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test.tsv', sep='\t')
+#test2 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test_stg2.tsv', sep='\t')
+
+#modifying/quantifying raw data
+train = train %>% mutate(log_price = log(price+1)) # take log of the price
+train = train %>% mutate(item_condition_id = factor(item_condition_id))
+train = train %>% mutate(shipping = factor(shipping))
+train = data.frame(train, str_split_fixed(train$category_name, '/', 4)) %>%
+  mutate(cat1=X1, cat2=X2, cat3=X3, cat4=X4) %>% select(-X1, -X2, -X3, -X4)
+train = train %>% mutate(num_token_des = str_count(item_description, '\\S+'))
+train = train %>% mutate(num_token_name = str_count(name, '\\S+'))
+
+#selecting features for regression
+trial=train[,c("item_condition_id","cat1","cat2","cat3","cat4","brand_name","shipping","num_token_des","num_token_name","log_price")]
+trial1=sparse.model.matrix(~item_condition_id+cat1+cat2+cat3+cat4+brand_name+shipping+num_token_des+num_token_name,trial[,1:(ncol(trial)-1)])
+
+#processing descrription/name
+des_tfidf <- dfm_tfidf(dfm_trim(dfm(tokens(tokens_remove(tokens(corpus(char_tolower(train$item_description)),   
+  remove_numbers = FALSE,remove_punct = TRUE,remove_symbols = TRUE,remove_separators = TRUE),stopwords("english")), 
+  ngrams = 1:2)), min_count = 600))
+name_tfidf <- dfm_tfidf(dfm_trim(dfm(tokens(tokens_remove(tokens(corpus(char_tolower(train$name)),
+  remove_numbers = TRUE,remove_punct = TRUE,remove_symbols = TRUE,remove_separators = TRUE),stopwords("english")), 
+  ngrams = 1)), min_count = 30))
+class(des_tfidf) <- class(trial1)
+class(name_tfidf) <- class(trial1)
+modtrain=cbind(trial1,des_tfidf,name_tfidf)
+
+nr=nrow(trial)
+sp=sample(nr,nr*0.3)
+
+#regression with LASSO and cross validating to get lambda
+fit1=glmnet(modtrain,trial[,ncol(trial)],alpha=1)
+cv=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)])
+
+#neural network(failed)
+#nntrain=cbind(trial[,ncol(trial)],modtrain)
+#nn=neuralnet(nntrain)
+
+#checking accuracy
+check=sample(1:nr,1000)
+pred=predict(fit1,modtrain[,],type="response", s=cv$lambda.min)
+rmsle=sqrt(sum((pred-log(train[,"price"]+1))^2)/nr)
+#visualizing
+error=exp(pred)-1-train[check,"price"]
+percentage_error=abs(error)/train[check,"price"]
+print(mean(percentage_error))
+print(sqrt(sum(error^2)/1000))
+plot(trial[check,ncol(trial)],pred)
+abline(a=0,b=1)
+#sparse matrix with all test data!!!!!!!!!!!!!!!!
