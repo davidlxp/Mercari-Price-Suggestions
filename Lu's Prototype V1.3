@@ -20,14 +20,19 @@ train = fread('C:/Users/Yixiao Lu/Documents/189fpj/train.tsv', sep='\t')
 #test1 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test.tsv', sep='\t')
 #test2 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test_stg2.tsv', sep='\t')
 
-#modifying/quantifying raw data
+#modifying/quantifying raw data UPDATED
 train = train %>% mutate(log_price = log(price+1)) # take log of the price
 train = train %>% mutate(item_condition_id = factor(item_condition_id))
 train = train %>% mutate(shipping = factor(shipping))
 train = data.frame(train, str_split_fixed(train$category_name, '/', 4)) %>%
   mutate(cat1=X1, cat2=X2, cat3=X3, cat4=X4) %>% select(-X1, -X2, -X3, -X4)
+train = train %>% mutate(cat1 = as.character(cat1),cat2 = as.character(cat2),cat3 = as.character(cat3),cat4 = as.character(cat4))
+train[which(train=="",arr.ind=TRUE)]='missing'
+train = train %>% mutate(cat1 = as.factor(cat1),cat2 = as.factor(cat2),cat3 = as.factor(cat3),cat4 = as.factor(cat4))
 train = train %>% mutate(num_token_des = str_count(item_description, '\\S+'))
 train = train %>% mutate(num_token_name = str_count(name, '\\S+'))
+train[which(train$item_description=="",arr.ind=TRUE),"item_description"]='missing'
+
 
 #selecting features for regression
 trial=train[,c("item_condition_id","cat1","cat2","cat3","cat4","brand_name","shipping","num_token_des","num_token_name","log_price")]
