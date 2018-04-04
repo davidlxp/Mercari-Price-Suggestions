@@ -9,6 +9,12 @@ install.packages("tm")
 library('tm')
 install.packages("wordcloud")
 library('wordcloud')
+install.packages("RWeka")
+library("RWeka")
+install.packages("tokenizers")
+library("tokenizers")
+install.packages("quanteda")
+library("quanteda")
 
 
 #read in the data
@@ -687,5 +693,40 @@ corpus <- tm_map(corpus,stripWhitespace)
 wordcloud(corpus,random.order=F,scale=c(2,0.5),max.words = 40,color=rainbow(100))
 
 
+
+##bigram for name 
+#build bigram wordcloud
+corpus <- corpus(sp$name)
+mycorpus <- corpus %>% 
+  dfm(
+    ngrams = 3,
+    ignoredFeatures = c("rm",stopwords("english")),
+    remove_punct = TRUE,
+    remove_numbers = TRUE,
+    concatenator = " "
+  )
+
+textplot_wordcloud(mycorpus,random.order=F,max.words = 40,scale=c(2,0.5),color=rainbow(100))
+
+
+
+
+##bigram for item description  (experiment)
+#set "No description yet" to null
+sp$item_description[which(sp$item_description == "No description yet")] = "Null"
+#build bigram wordcloud
+corpus <- corpus(sp$item_description)
+mycorpus <- corpus %>% corpus_sample(size = floor(ndoc(corpus) * 0.2))%>%
+  dfm(
+    ngrams = 2,
+    ignoredFeatures = c("this","the","is","in","i","they","no","you","and","for","with",
+                                "but","are","not","have","from","please","have","can","all","each",
+                                "will","been","just","your","that","has","yet","these","Null"),
+    remove_punct = TRUE,
+    remove_numbers = TRUE,
+    concatenator = " "
+  )
+
+textplot_wordcloud(mycorpus,random.order=F,scale=c(2,0.5),color=rainbow(100))
 
 
