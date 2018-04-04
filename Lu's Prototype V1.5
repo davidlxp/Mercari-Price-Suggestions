@@ -20,7 +20,7 @@ train = fread('C:/Users/Yixiao Lu/Documents/189fpj/train.tsv', sep='\t')
 #test1 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test.tsv', sep='\t')
 #test2 = fread('C:/Users/Yixiao Lu/Documents/189fpj/test_stg2.tsv', sep='\t')
 
-#modifying/quantifying raw data UPDATED
+#modifying/quantifying raw data
 train = train %>% mutate(log_price = log(price+1)) # take log of the price
 train = train %>% mutate(item_condition_id = factor(item_condition_id))
 train = train %>% mutate(shipping = factor(shipping))
@@ -32,7 +32,6 @@ train = train %>% mutate(cat1 = as.factor(cat1),cat2 = as.factor(cat2),cat3 = as
 train = train %>% mutate(num_token_des = str_count(item_description, '\\S+'))
 train = train %>% mutate(num_token_name = str_count(name, '\\S+'))
 train[which(train$item_description=="",arr.ind=TRUE),"item_description"]='missing'
-
 
 #selecting features for regression
 trial=train[,c("item_condition_id","cat1","cat2","cat3","cat4","brand_name","shipping","num_token_des","num_token_name","log_price")]
@@ -50,25 +49,34 @@ class(name_tfidf) <- class(trial1)
 modtrain=cbind(trial1,des_tfidf,name_tfidf)
 
 nr=nrow(trial)
-sp=sample(nr,nr*0.3)
+sp=sample(nr,nr*0.1)
 
-#regression with LASSO and cross validating to get lambda
-fit1=glmnet(modtrain,trial[,ncol(trial)],alpha=1)
-cv=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)])
+#regression with Ridge(1), LASSO(2) and cross validating to get lambda
+fit1=glmnet(modtrain,trial[,ncol(trial)],alpha=0)
+fit2=glmnet(modtrain,trial[,ncol(trial)],alpha=1)
+cv1=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=0)
+cv2=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=1)
+
 
 #neural network(failed)
 #nntrain=cbind(trial[,ncol(trial)],modtrain)
 #nn=neuralnet(nntrain)
 
 #checking accuracy
-check=sample(1:nr,1000)
-pred=predict(fit1,modtrain[,],type="response", s=cv$lambda.min)
-rmsle=sqrt(sum((pred-log(train[,"price"]+1))^2)/nr)
+pred1=predict(fit1,modtrain[,],type="response", s=cv1$lambda.min)
+rmsle1=sqrt(sum((pred1-log(train[,"price"]+1))^2)/nr)
+pred2=predict(fit2,modtrain[,],type="response", s=cv2$lambda.min)
+rmsle2=sqrt(sum((pred2-log(train[,"price"]+1))^2)/nr)
+
 #visualizing
+check=sample(1:nr,1000)
 error=exp(pred)-1-train[check,"price"]
 percentage_error=abs(error)/train[check,"price"]
 print(mean(percentage_error))
 print(sqrt(sum(error^2)/1000))
-plot(trial[check,ncol(trial)],pred)
+plot(trial[check,ncol(trial)],pred[check,])
 abline(a=0,b=1)
 #sparse matrix with all test data!!!!!!!!!!!!!!!!
+
+plot(fit1,xvar="lambda",label=TRUE)
+plot(fit2,xvar="lambda",label=TRUE)
