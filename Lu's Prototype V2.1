@@ -68,9 +68,9 @@ cv2=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=1)
 
 #checking accuracy
 pred1=predict(fit1,modtrain[testid,],type="response", s=cv1$lambda.min)
-rmsle1=sqrt(sum((pred1-log(train[testid,"price"]+1))^2)/nr)
+rmsle1=sqrt(sum((pred1-log(train[testid,"price"]+1))^2)/length(testid))
 pred2=predict(fit2,modtrain[testid,],type="response", s=cv2$lambda.min)
-rmsle2=sqrt(sum((pred2-log(train[testid,"price"]+1))^2)/nr)
+rmsle2=sqrt(sum((pred2-log(train[testid,"price"]+1))^2)/length(testid))
 
 #visualizing
 check=sample(1:nr,1000)
