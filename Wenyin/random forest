@@ -1,0 +1,448 @@
+# Install all required packages.
+
+install.packages(c("data.table","ggplot2", "e1071", "caret", 
+                   "irlba", "randomForest","janeaustenr","tidyitem_description","dplyr","stringr","quanteda"))
+library("data.table")
+library("tokenizers")
+library(dplyr) # data manipulation
+library(tidyr) # data manipulation
+library(tibble) # data wrangling
+library(stringr) # String processing
+
+# Load up the .tsv data and explore in RStudio.
+
+original_train <- as.data.frame(fread("train.tsv"))
+#generate 7000 sample randomly
+train<- original_train[sample(nrow(original_train), 7000), ] 
+
+
+
+# factor data and add colms
+#modifying/quantifying raw data
+train = train %>% mutate(log_price = log(price+1)) # take log of the price
+train = train %>% mutate(item_condition_id = factor(item_condition_id))
+train = train %>% mutate(shipping = factor(shipping))
+train = data.frame(train, str_split_fixed(train$category_name, '/', 4)) %>%
+  mutate(cat1=X1, cat2=X2, cat3=X3, cat4=X4) %>% select(-X1, -X2, -X3, -X4)
+train = train %>% mutate(cat1 = as.character(cat1),cat2 = as.character(cat2),cat3 = as.character(cat3),cat4 = as.character(cat4))
+train[which(train=="",arr.ind=TRUE)]='missing'
+train = train %>% mutate(cat1 = as.factor(cat1),cat2 = as.factor(cat2),cat3 = as.factor(cat3),cat4 = as.factor(cat4))
+train = train %>% mutate(num_token_des = str_count(item_description, '\\S+'))
+train = train %>% mutate(num_token_name = str_count(name, '\\S+'))
+train[which(train$item_description=="",arr.ind=TRUE),"item_description"]='missing'
+
+
+#train$log_price <- as.factor(train$log_price)
+#train$length_name <- as.factor(train$length_name)
+#get the useful colms -- our X1,X2,X3... for models
+#train <- train[,c(2,3,5,7,8,9,10,11,12,13)]
+View(train[1:15,1:17])
+
+
+# As we know that our data has non-trivial class imbalance, we'll 
+# use the mighty caret package to create a randomg train/test split 
+# that ensures the correct ham/spam class log_price proportions (i.e., 
+# we'll use caret for a random stratified split).
+library(caret)
+#help(package = "caret")
+
+
+# There are many packages in the R ecosystem for performing item_description
+# analytics. One of the newer packages in quanteda. The quanteda
+# package has many useful functions for quickly and easily working
+# with item_description data.
+library(quanteda)
+#help(package = "quanteda")
+
+
+########Tokenize  item_description #####################.
+des_token <- tokens(train$item_description, what = "word", 
+                       remove_numbers = TRUE, remove_punct = TRUE,
+                       remove_symbols = TRUE, remove_hyphens = TRUE)
+des_token <- tokens_tolower(des_token)
+des_token <- tokens_select(des_token, stopwords(), 
+                              selection = "remove")
+des_token <- tokens_wordstem(des_token, language = "english")
+
+# Create our first bag-of-words model.
+des_token.dfm <- dfm(des_token, tolower = FALSE)
+
+# Transform to a matrix and inspect.
+des_token.matrix <- as.matrix(des_token.dfm)
+View(des_token.matrix[1:20, 1:40])
+dim(des_token.matrix) 
+
+
+################tfidf
+# Our function for calculating relative term frequency (TF)
+term.frequency <- function(row) {
+  row / sum(row)
+}
+
+# Our function for calculating inverse document frequency (IDF)
+inverse.doc.freq <- function(col) {
+  corpus.size <- length(col)
+  doc.count <- length(which(col > 0))
+  
+  log10(corpus.size / doc.count)
+}
+
+# Our function for calculating TF-IDF.
+tf.idf <- function(x, idf) {
+  x * idf
+}
+
+
+# First step, normalize all documents via TF.
+des_token.df <- apply(des_token.matrix, 1, term.frequency)
+dim(des_token.df)
+#View(des_token.df[1:20, 1:100])
+des_token.idf <- apply(des_token.matrix, 2, inverse.doc.freq)
+str(des_token.idf)
+
+
+# Lastly, calculate TF-IDF for our training corpus.
+des_token.tfidf <-  apply(des_token.df, 2, tf.idf, idf = des_token.idf)
+dim(des_token.tfidf)
+#View(des_token.tfidf[1:25, 1:25])
+
+
+# Transpose the matrix
+des_token.tfidf <- t(des_token.tfidf)
+dim(des_token.tfidf)
+#View(des_token.tfidf[1:25, 1:25])
+
+
+# Check for incopmlete cases.
+incomplete.cases <- which(!complete.cases(des_token.tfidf))
+train$item_description[incomplete.cases]
+
+
+# Fix incomplete cases
+des_token.tfidf[incomplete.cases,] <- rep(0.0, ncol(des_token.tfidf))
+View(des_token.tfidf[1:10,1:10])
+sum(which(!complete.cases(des_token.tfidf)))
+
+
+
+# Perform SVD     ###########################
+
+train_des.irlba <- irlba(t(des_token.tfidf), nv = 300, maxit = 600)
+
+dim(train_des.irlba$v)
+class(train_des.irlba$v) #matrix
+
+#Create new feature data frame using our document semantic space of 300
+# features (i.e., the V matrix from our SVD).
+train.svd <- data.frame(item_condition_id=train$item_condition_id,cat1=train$cat1,cat2=train$cat2,cat3=train$cat3,
+                        cat4=train$cat4,brand_name=train$brand_name,shipping=train$shipping,
+                        num_token_des=train$shipping,num_token_name=train$num_token_name,log_price=train$log_price,train_des.irlba$v)
+train.svd2<- train.svd[1:1000,]
+train2<-train[1:1000,]
+
+set.seed(48743)
+cv.folds <- createMultiFolds(train2$log_price, k = 10, times = 3)
+cv.cntrl <- trainControl(method = "repeatedcv", number = 10,
+                         repeats = 3, index = cv.folds)
+library(doSNOW)
+# Time the code execution
+start.time <- Sys.time()
+# Create a cluster to work on 10 logical cores.
+cl <- makeCluster(10, type = "SOCK")
+registerDoSNOW(cl)
+
+rpart.cv.1 <- train(log_price ~ ., data = train.svd2, method = "lm", 
+                    trControl = cv.cntrl, tuneLength = 7)
+
+# Processing is done, stop cluster.
+stopCluster(cl)
+# Total time of execution on workstation was approximately 4 minutes. 
+total.time <- Sys.time() - start.time
+total.time
+# Check out our results.
+rpart.cv.1
+
+
+
+
+#selecting features for regression
+trial=train[,c("item_condition_id","cat1","cat2","cat3","brand_name","shipping","num_token_des","num_token_name","log_price")]
+trial1=sparse.model.matrix(~item_condition_id+cat1+cat2+cat3+brand_name+shipping+num_token_des+num_token_name,trial[,1:(ncol(trial)-1)])
+
+mod<- cbind(trial1,train.svd.matrix)
+nr=nrow(trial)
+sp=sample(nr,nr*0.1)
+
+fit1=glmnet(mod,trial[,ncol(trial)],alpha=0)
+
+
+rf1 <- train(log_price~., data = train_des.svd, method = "rf")
+res <- train(train_des.svd, train_des.svd$log_price, method='glm',metric = 'Accuracy', 
+             trControl= trainControl(method='boot', savePredictions = TRUE))
+
+
+
+
+
+modtrain<-cbind(trial,train.svd.matrix)
+form<-cbind(log_price)~item_condition_id+cat1+cat2+cat3+brand_name+shipping+num_token_des+num_token_name+
+
+
+
+modtrain.df<-data.frame(modtrain)
+
+
+
+
+
+
+
+
+
+
+
+
+trial1=sparse.model.matrix(~item_condition_id+cat1+cat2+cat3+cat4+brand_name+shipping+num_token_des+num_token_name,trial[,1:(ncol(trial)-1)])
+
+class(train_des.irlba)<-class(trial1)
+
+
+
+View(trial[1:20,1:10])
+nr=nrow(trial)
+sp=sample(nr,nr*0.1)
+
+f
+
+
+
+
+
+
+
+
+modtrain=cbind(trial1,des_tfidf,name_tfidf)
+
+
+
+
+
+fit2=glmnet(modtrain,trial[,ncol(trial)],alpha=1)
+cv1=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=0)
+cv2=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=1)
+
+
+
+
+# Create a cluster to work on 10 logical cores.
+cl <- makeCluster(10, type = "SOCK")
+ registerDoSNOW(cl)
+
+# Time the code execution
+start.time <- Sys.time()
+
+# Re-run the training process with the additional feature.
+rf.cv.2 <- train(log_price ~ ., data = train_des.svd, method = "rf",
+                trControl = cv.cntrl, tuneLength = 7, 
+                 importance = TRUE)
+
+# Processing is done, stop cluster.
+stopCluster(cl)
+
+ #Total time of execution on workstation was 
+ total.time <- Sys.time() - start.time
+ total.time
+
+
+# Check the results.
+rf.cv.2
+
+
+
+
+
+# Drill-down on the results.
+confusionMatrix(train.svd$log_price, rf.cv.2$finalModel$predicted)
+
+# How important was the new feature?
+library(randomForest)
+varImpPlot(rf.cv.1$finalModel)
+varImpPlot(rf.cv.2$finalModel)
+
+
+
+
+# Turns out that our item_descriptionLength feature is very predictive and pushed our
+# overall accuracy over the training data to 97.1%. We can also use the
+# power of cosine similarity to engineer a feature for calculating, on 
+# average, how alike each SMS item_description message is to all of the spam messages.
+# The hypothesis here is that our use of bigrams, tf-idf, and LSA have 
+# produced a representation where ham SMS messages should have low cosine
+# similarities with spam SMS messages and vice versa.
+
+# Use the lsa package's cosine function for our calculations.
+#install.packages("lsa")
+install.packages("lsa")
+library(lsa)
+
+train.similarities <- cosine(t(as.matrix(train.svd[, -c(1, ncol(train.svd))])))
+
+
+# Next up - take each SMS item_description message and find what the mean cosine 
+# similarity is for each SMS item_description mean with each of the spam SMS messages.
+# Per our hypothesis, ham SMS item_description messages should have relatively low
+# cosine similarities with spam messages and vice versa!
+spam.indexes <- which(train$log_price == "spam")
+
+train.svd$SpamSimilarity <- rep(0.0, nrow(train.svd))
+for(i in 1:nrow(train.svd)) {
+  train.svd$SpamSimilarity[i] <- mean(train.similarities[i, spam.indexes])  
+}
+
+
+# As always, let's visualize our results using the mighty ggplot2
+ggplot(train.svd, aes(x = SpamSimilarity, fill = log_price)) +
+  theme_bw() +
+  geom_histogram(binwidth = 0.05) +
+  labs(y = "Message Count",
+       x = "Mean Spam Message Cosine Similarity",
+       title = "Distribution of Ham vs. Spam Using Spam Cosine Similarity")
+
+
+
+
+# Load results from disk.
+load("rf.cv.3.RData")
+
+# Check the results.
+rf.cv.3
+
+# Drill-down on the results.
+confusionMatrix(train.svd$log_price, rf.cv.3$finalModel$predicted)
+
+# How important was this feature?
+library(randomForest)
+varImpPlot(rf.cv.3$finalModel)
+
+
+
+
+# We've built what appears to be an effective predictive model. Time to verify
+# using the test holdout data we set aside at the beginning of the project.
+# First stage of this verification is running the test data through our pre-
+# processing pipeline of:
+#      1 - Tokenization
+#      2 - Lower casing
+#      3 - Stopword removal
+#      4 - Stemming
+#      5 - Adding bigrams
+#      6 - Transform to dfm
+#      7 - Ensure test dfm has same features as train dfm
+
+# Tokenization.
+test.tokens <- tokens(test$item_description, what = "word", 
+                      remove_numbers = TRUE, remove_punct = TRUE,
+                      remove_symbols = TRUE, remove_hyphens = TRUE)
+
+# Lower case the tokens.
+test.tokens <- tokens_tolower(test.tokens)
+
+# Stopword removal.
+test.tokens <- tokens_select(test.tokens, stopwords(), 
+                             selection = "remove")
+
+# Stemming.
+test.tokens <- tokens_wordstem(test.tokens, language = "english")
+
+# Add bigrams.
+test.tokens <- tokens_ngrams(test.tokens, n = 1:2)
+
+# Convert n-grams to quanteda document-term frequency matrix.
+test.tokens.dfm <- dfm(test.tokens, tolower = FALSE)
+
+# Explore the train and test quanteda dfm objects.
+des_token.dfm
+test.tokens.dfm
+
+# Ensure the test dfm has the same n-grams as the training dfm.
+#
+# NOTE - In production we should expect that new item_description messages will 
+#        contain n-grams that did not exist in the original training
+#        data. As such, we need to strip those n-grams out.
+#
+test.tokens.dfm <- dfm_select(test.tokens.dfm, pattern = des_token.dfm,
+                              selection = "keep")
+test.tokens.matrix <- as.matrix(test.tokens.dfm)
+test.tokens.dfm
+
+
+
+
+# With the train test features in place next up is the projecting the term
+# counts for the unigrams into the same TF-IDF vector space as our training
+# data. The high level process is as follows:
+#      1 - Normalize each document (i.e, each row)
+#      2 - Perform IDF multiplication using training IDF values
+
+# Normalize all documents via TF.
+test.tokens.df <- apply(test.tokens.matrix, 1, term.frequency)
+str(test.tokens.df)
+
+# Lastly, calculate TF-IDF for our training corpus.
+test.tokens.tfidf <-  apply(test.tokens.df, 2, tf.idf, idf = des_token.idf)
+dim(test.tokens.tfidf)
+View(test.tokens.tfidf[1:25, 1:25])
+
+# Transpose the matrix
+test.tokens.tfidf <- t(test.tokens.tfidf)
+
+# Fix incomplete cases
+summary(test.tokens.tfidf[1,])
+test.tokens.tfidf[is.na(test.tokens.tfidf)] <- 0.0
+summary(test.tokens.tfidf[1,])
+
+
+
+
+# With the test data projected into the TF-IDF vector space of the training
+# data we can now to the final projection into the training LSA semantic
+# space (i.e. the SVD matrix factorization).
+test.svd.train <- t(sigma.inverse * u.transpose %*% t(test.tokens.tfidf))
+
+
+# Lastly, we can now build the test data frame to feed into our trained
+# machine learning model for predictions. First up, add log_price and item_descriptionLength.
+test.svd <- data.frame(log_price = test$log_price, test.svd.train, 
+                       item_descriptionLength = test$item_descriptionLength)
+
+
+# Next step, calculate SpamSimilarity for all the test documents. First up, 
+# create a spam similarity matrix.
+test.similarities <- rbind(test.svd.train, train.irlba$v[spam.indexes,])
+test.similarities <- cosine(t(test.similarities))
+
+
+#
+# NOTE - The following code was updated post-video recoding due to a bug.
+#
+test.svd$SpamSimilarity <- rep(0.0, nrow(test.svd))
+spam.cols <- (nrow(test.svd) + 1):ncol(test.similarities)
+for(i in 1:nrow(test.svd)) {
+  # The following line has the bug fix.
+  test.svd$SpamSimilarity[i] <- mean(test.similarities[i, spam.cols])  
+}
+
+
+# Some SMS item_description messages become empty as a result of stopword and special 
+# character removal. This results in spam similarity measures of 0. Correct.
+# This code as added post-video as part of the bug fix.
+test.svd$SpamSimilarity[!is.finite(test.svd$SpamSimilarity)] <- 0
+
+
+# Now we can make predictions on the test data set using our trained mighty 
+# random forest.
+preds <- predict(rf.cv.3, test.svd)
+
+
+# Drill-in on results
+confusionMatrix(preds, test.svd$log_price)
