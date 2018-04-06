@@ -48,12 +48,16 @@ class(des_tfidf) <- class(trial1)
 class(name_tfidf) <- class(trial1)
 modtrain=cbind(trial1,des_tfidf,name_tfidf)
 
+setseed(189)
 nr=nrow(trial)
-sp=sample(nr,nr*0.1)
+trainid=sample(nr,nr*0.7)
+testid=(1:nr)[-trainid]
+sp=sample(trainid,nr*0.7*0.1)
 
-#regression with Ridge(1), LASSO(2) and cross validating to get lambda
-fit1=glmnet(modtrain,trial[,ncol(trial)],alpha=0)
-fit2=glmnet(modtrain,trial[,ncol(trial)],alpha=1)
+
+#regression with Ridge(1), LASSO(2) and cross validating to get lambda on trainid
+fit1=glmnet(modtrain[trainid,],trial[trainid,ncol(trial)],alpha=0)
+fit2=glmnet(modtrain[trainid,],trial[trainid,ncol(trial)],alpha=1)
 cv1=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=0)
 cv2=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=1)
 
@@ -63,18 +67,18 @@ cv2=cv.glmnet(modtrain[sp,],trial[sp,ncol(trial)],alpha=1)
 #nn=neuralnet(nntrain)
 
 #checking accuracy
-pred1=predict(fit1,modtrain[,],type="response", s=cv1$lambda.min)
-rmsle1=sqrt(sum((pred1-log(train[,"price"]+1))^2)/nr)
-pred2=predict(fit2,modtrain[,],type="response", s=cv2$lambda.min)
-rmsle2=sqrt(sum((pred2-log(train[,"price"]+1))^2)/nr)
+pred1=predict(fit1,modtrain[testid,],type="response", s=cv1$lambda.min)
+rmsle1=sqrt(sum((pred1-log(train[testid,"price"]+1))^2)/nr)
+pred2=predict(fit2,modtrain[testid,],type="response", s=cv2$lambda.min)
+rmsle2=sqrt(sum((pred2-log(train[testid,"price"]+1))^2)/nr)
 
 #visualizing
 check=sample(1:nr,1000)
-error=exp(pred)-1-train[check,"price"]
+error=exp(pred1)-1-train[check,"price"]
 percentage_error=abs(error)/train[check,"price"]
 print(mean(percentage_error))
 print(sqrt(sum(error^2)/1000))
-plot(trial[check,ncol(trial)],pred[check,])
+plot(trial[check,ncol(trial)],pred1[check,])
 abline(a=0,b=1)
 #sparse matrix with all test data!!!!!!!!!!!!!!!!
 
