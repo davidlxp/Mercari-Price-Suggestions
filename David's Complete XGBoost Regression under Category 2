@@ -1,0 +1,195 @@
+#install.packages("tm",dependencies=TRUE)
+#install.packages("randomForest") #random forest package
+#install.packages("quanteda") # in order to do tokenizer
+
+#install.packages("devtools")
+#require(devtools)
+#install_github('xgboost','tqchen',subdir='R-package')
+
+#install.packages('xgboost')
+
+library(Ckmeans.1d.dp)
+library(randomForest)
+library(data.table) # Loading data
+library(ggplot2) # Data visualization
+#library(treemapify) # Treemap visualization
+library(gridExtra) # Create multiplot
+library(MASS) #prepared for GXboost
+library(dplyr) # data manipulation
+library(tidyr) # data manipulation
+library(tibble) # data wrangling
+library(stringr) # String processing
+#library(repr)
+library(stringi) # String processing
+library(tm) # in order to run tm_map function
+library(quanteda)
+library(Matrix)
+library(glmnet)
+#library(tokenizers)
+library(randomForest)
+require(xgboost)
+if (!require('vcd')) install.packages('vcd')
+
+# solving the conflict between package MASS and dplyr
+mtcars %>%
+  dplyr::select(mpg)
+
+
+###### GET ORGINAL DATA ######
+getwd()
+#install.packages("data.table")
+require("data.table")
+setwd("D:/UCSD COURSE/Math 189 Winter 2018/Final Project")
+getwd()
+
+
+train<- as.data.frame(fread("train.tsv"))
+
+###### modifying/quantifying raw data ######
+train = train %>% mutate(log_price = log(price+1)) # take log of the price
+train = train %>% mutate(item_condition_id = factor(item_condition_id))
+train = train %>% mutate(shipping = factor(shipping))
+train = data.frame(train, str_split_fixed(train$category_name, '/', 4)) %>% mutate(cat1=X1, cat2=X2, cat3=X3, cat4=X4) %>% select (-X1, -X2, -X3, -X4)
+train = train %>% mutate(cat1 = as.character(cat1),cat2 = as.character(cat2),cat3 = as.character(cat3),cat4 = as.character(cat4))
+train[which(train=="",arr.ind=TRUE)]='missing'
+train = train %>% mutate(cat1 = as.factor(cat1),cat2 = as.factor(cat2),cat3 = as.factor(cat3),cat4 = as.factor(cat4))
+train = train %>% mutate(num_token_des = str_count(item_description, '\\S+')) #length of description
+train = train %>% mutate(num_token_name = str_count(name, '\\S+')) #length of name
+train[which(train$item_description=="",arr.ind=TRUE),"item_description"]='missing'
+
+#Creating a copy of train for editing, call it NewTrain
+NewTrain= train
+
+### Finding out sample size of a cat of product in under CAT2 ###
+UniCat2 <- as.matrix(unique(NewTrain[,'cat2']))
+UniCat2
+l <- length(UniCat2)
+
+AllNumEleCat2 <- rep(NA,l)
+
+# For loop to find out the size for each category of product in CAT2
+for (i in 1:l){
+  x <- UniCat2[i]
+  CatTrain <- NewTrain[which(NewTrain[,"cat2"]==x),]
+  NumEle <- nrow(CatTrain)
+  AllNumEleCat2[i] <- NumEle 
+}
+
+# number of items in each unique category (UniCat2) of product in Cat2
+as.matrix(AllNumEleCat2)
+median(AllNumEleCat2) # Result: 3968
+mean(AllNumEleCat2) # Result: 13004.69
+
+
+# Finding out a category of product in Cat2 that less than 3500 items and
+lessItem <- UniCat2[which(AllNumEleCat2 < 3500)]
+lessItem
+
+as.matrix(lessItem)
+length(lessItem) # Result: 55 category of products in Cat2 has items less than 3500.
+
+
+length.lessItem <- sum(AllNumEleCat2[which(AllNumEleCat2 <3500)]) # Calculate how many items in total for lessItem product
+
+
+### Comment: Since medium is 3968, So we pick 3500 as the considering sample size of keeping a specific cat in Cat2 ###
+### We will combine the data below 3500 as a category other ###
+
+  
+# For loop for combining data number that less than 3500
+
+NewTrain$cat2 <- as.character(NewTrain$cat2) #convert cat2 data to character for doing replacement
+
+ for (i in 1:l){
+    long <- AllNumEleCat2[i]
+    name <- UniCat2[i]
+    if(long<3500){
+      NewTrain$cat2[NewTrain$cat2==name] <- "LessG"
+    }
+ }
+
+NewTrain$cat2 <- as.factor(NewTrain$cat2) #convert cat2 data back as categorical data
+
+
+LessG<- NewTrain$cat2[which(NewTrain$cat2 == "LessG")]
+LessG # The Product that under LessG category in Cat2, LessG means 'Group consisted by less amount product'
+
+# check if Amount of LessG exactly same as lessItem
+length(LessG)
+length.lessItem
+
+
+
+###### Complete XGboost Regression Under cat2 ######
+
+N.UniCat2 <-as.matrix(unique(NewTrain[,'cat2']))
+N.UniCat2
+k<-length(N.UniCat2) # there are 60 unique category of products now after category combination
+
+
+rmse.all <- rep(NA,k)
+
+for(i in 1:k){
+  
+item.train <- NewTrain[which(NewTrain$cat2 == N.UniCat2[i]),]
+
+trial=item.train[,c("item_condition_id","cat1","cat2","cat3","cat4","brand_name","shipping","num_token_des","num_token_name","log_price")]
+trial1=sparse.model.matrix(~item_condition_id+cat1+cat2+cat3+cat4+brand_name+shipping+num_token_des+num_token_name,trial[,1:(ncol(trial)-1)])
+
+description_tf_matrix <- dfm_tfidf(dfm_trim(dfm(tokens(tokens_remove(tokens(corpus(char_tolower(item.train$item_description)),remove_numbers = FALSE,remove_punct = TRUE,remove_symbols = TRUE,remove_separators = TRUE),stopwords("english")), ngrams = 1:2)), min_count = 600)) 
+
+trimmed_names_dfm <- dfm_tfidf(dfm_trim(dfm(tokens(tokens_remove(tokens(corpus(char_tolower(item.train$name)),remove_numbers = TRUE,remove_punct = TRUE,remove_symbols = TRUE,remove_separators = TRUE),stopwords("english")), ngrams = 1)), min_count = 30))
+
+class(description_tf_matrix) <- class(trial1)
+class(trimmed_names_dfm) <- class(trial1)
+modtrain=cbind(trial1,description_tf_matrix,trimmed_names_dfm)
+
+
+nc=ncol(modtrain)
+nr=nrow(modtrain)
+
+set.seed(189)
+sp=sample(nr,nr*0.3)
+
+xgbooster <- xgboost(data = modtrain, trial$log_price, max_depth = 10,
+                     eta = 0.8, nrounds =10, gamma=0.1,objective='reg:linear')
+
+check= modtrain[sp,]
+pred= predict (xgbooster, check,type="response")
+pred = as.matrix(pred)
+pred
+
+price = trial[sp,'log_price']
+price = as.matrix(price)
+price
+
+
+N <- length(price)
+
+rmse.pre <- rep(NA,N)
+for (j in 1:N){
+  
+  diff <- pred[[j]]-price[[j]] 
+  sq <- diff^2
+  rmse.pre[j] <-sq
+  
+}
+
+rmse <- (mean(rmse.pre))^(1/2)
+rmse
+
+rmse.all[i]<-rmse
+
+}
+
+rmse.all <- as.matrix(rmse.all)
+rmse.all
+
+mean(rmse.all)
+
+
+  
+
+
+
+
